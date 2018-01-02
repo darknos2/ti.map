@@ -46,6 +46,7 @@ public class MapModule extends KrollModule
 	public static final String PROPERTY_STREET_NAMES = "streetNames";
 	public static final String PROPERTY_USER_NAVIGATION = "userNavigation";
 	public static final String PROPERTY_HIDDEN = "hidden";
+	public static final String PROPERTY_CLUSTERING = "clustering";
 	public static final String EVENT_PIN_CHANGE_DRAG_STATE = "pinchangedragstate";
 	public static final String EVENT_ON_SNAPSHOT_READY = "onsnapshotready";
 	public static final String EVENT_REGION_WILL_CHANGE  = "regionwillchange";
@@ -63,6 +64,25 @@ public class MapModule extends KrollModule
 	public static final String PROPERTY_CIRCLES = "circles";
 	public static final String PROPERTY_CENTER = "center";
 	public static final String PROPERTY_RADIUS = "radius";
+	
+	public static final String PROPERTY_INTERVAL = "interval";
+
+	public static final String PROPERTY_TILE_PROVIDER = "tileProvider";
+	public static final String PROPERTY_MBTILES = "mbtiles";
+	public static final String PROPERTY_PATTERN = "patternItem";
+	public static final String PROPERTY_DASH_LENGTH = "dashLength";
+	public static final String PROPERTY_GAP_LENGTH = "gapLength";
+	public static final String PROPERTY_JOINT_TYPE = "jointType";
+	public static final String PROPERTY_MAP_STYLE = "mapStyle";
+	public static final String PROPERTY_KML = "kml";
+	public static final String PROPERTY_JSON = "json";
+	public static final String PROPERTY_MAP_VIEW = "mapView";
+	
+
+
+	public static final String LCAT = "TiMap";
+
+
 
 	@Kroll.constant public static final int NORMAL_TYPE = GoogleMap.MAP_TYPE_NORMAL;
 	@Kroll.constant public static final int TERRAIN_TYPE = GoogleMap.MAP_TYPE_TERRAIN;

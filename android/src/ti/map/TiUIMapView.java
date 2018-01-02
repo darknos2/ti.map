@@ -9,6 +9,7 @@ package ti.map;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Collection;
 
 import org.appcelerator.kroll.KrollDict;
 import org.appcelerator.kroll.KrollProxy;
@@ -52,13 +53,20 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MapStyleOptions;
+import com.google.maps.android.clustering.ClusterManager;
+import com.google.maps.android.MarkerManager;
+import com.google.maps.android.clustering.Cluster;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 
 
 public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClickListener, GoogleMap.OnMapClickListener,
 	GoogleMap.OnMarkerDragListener, GoogleMap.OnInfoWindowClickListener, GoogleMap.InfoWindowAdapter,
 	GoogleMap.OnMapLongClickListener, GoogleMap.OnMapLoadedCallback, OnMapReadyCallback,
-	GoogleMap.OnCameraMoveStartedListener, GoogleMap.OnCameraMoveListener, GoogleMap.OnCameraIdleListener
+	GoogleMap.OnCameraMoveStartedListener, GoogleMap.OnCameraMoveListener, GoogleMap.OnCameraIdleListener, 
+	ClusterManager.OnClusterClickListener<TiClusterMarker>
 {
 
 	private static final String TAG = "TiUIMapView";
@@ -68,10 +76,18 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 	protected LatLngBounds preLayoutUpdateBounds;
 	protected ArrayList<TiMarker> timarkers;
 	protected AnnotationProxy selectedAnnotation;
+	
 
 	private ArrayList<CircleProxy> currentCircles;
 	private ArrayList<PolygonProxy> currentPolygons;
 	private ArrayList<PolylineProxy> currentPolylines;
+	private ClusterManager<TiClusterMarker> mClusterManager;
+	public static HashMap<String, TiClusterMarker> markerItemMap = new HashMap<String, TiClusterMarker>();
+	private boolean useClustering = false;
+	
+	private ArrayList<TileOverlayProxy> currentTileoverlays;
+	private ArrayList<HeatmapOverlayProxy> currentHeatmapoverlays;
+
 
 	public TiUIMapView(final TiViewProxy proxy, Activity activity) {
 		super(proxy, activity);
@@ -79,6 +95,9 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 		currentCircles = new ArrayList<CircleProxy>();
 		currentPolygons = new ArrayList<PolygonProxy>();
 		currentPolylines = new ArrayList<PolylineProxy>();
+		currentTileoverlays = new ArrayList<TileOverlayProxy>();
+		currentHeatmapoverlays = new ArrayList<HeatmapOverlayProxy>();
+		
 	}
 
 	/**
@@ -167,12 +186,14 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 					android.R.id.content);
 			setBackgroundTransparent(rootView);
 		}
+		mClusterManager = new ClusterManager<TiClusterMarker>(TiApplication.getInstance().getApplicationContext(), map);
+		mClusterManager.setRenderer(new TiClusterRenderer(TiApplication.getInstance().getApplicationContext(), map, mClusterManager));
 		processMapProperties(proxy.getProperties());
 		processPreloadRoutes();
 		processPreloadPolygons();
 		processPreloadCircles();
 		processPreloadPolylines();
-		map.setOnMarkerClickListener(this);
+		map.setOnMarkerClickListener(mClusterManager);
 		map.setOnMapClickListener(this);
 		map.setOnCameraIdleListener(this);
 		map.setOnCameraMoveStartedListener(this);
@@ -182,6 +203,7 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 		map.setInfoWindowAdapter(this);
 		map.setOnMapLongClickListener(this);
 		map.setOnMapLoadedCallback(this);
+		mClusterManager.setOnClusterClickListener(this);
 
 		((ViewProxy) proxy).clearPreloadObjects();
 	}
@@ -220,6 +242,9 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 		}
 		if (d.containsKey(TiC.PROPERTY_REGION)) {
 			updateCamera(d.getKrollDict(TiC.PROPERTY_REGION));
+		}
+		if (d.containsKey(MapModule.PROPERTY_CLUSTERING)) {
+			useClustering = TiConvert.toBoolean(d, MapModule.PROPERTY_CLUSTERING, false);
 		}
 		if (d.containsKey(TiC.PROPERTY_ANNOTATIONS)) {
 			Object[] annotations = (Object[]) d.get(TiC.PROPERTY_ANNOTATIONS);
@@ -284,6 +309,8 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 			setZoomControlsEnabled(TiConvert.toBoolean(newValue, true));
 		} else if (key.equals(TiC.PROPERTY_STYLE)) {
 			setStyle(TiConvert.toString(newValue,""));
+		} else if (key.equals(MapModule.PROPERTY_CLUSTERING)) {
+			 useClustering = TiConvert.toBoolean(newValue, false);
 		} else {
 			super.propertyChanged(key, oldValue, newValue, proxy);
 		}
@@ -294,7 +321,7 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 	}
 
 	protected void setStyle(String style) {
-		if (style != null && style != ""){
+		if (style != null && style != "") {
 			try {
 				boolean success = map.setMapStyle(new MapStyleOptions(style));
 				if (!success) {
@@ -309,7 +336,9 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 	protected void setUserLocationEnabled(boolean enabled) {
 		Context context = TiApplication.getInstance().getApplicationContext();
 		if (Build.VERSION.SDK_INT < 23 || context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-			map.setMyLocationEnabled(enabled);
+			if (map != null) {
+				map.setMyLocationEnabled(enabled);
+			}
 		} else {
 			Log.e(TAG, "Enable ACCESS_FINE_LOCATION permission to use userLocation");
 		}
@@ -429,18 +458,37 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 	}
 
 	protected void addAnnotation(AnnotationProxy annotation) {
-		// if annotation already on map, remove it first then re-add it
-		TiMarker tiMarker = annotation.getTiMarker();
-		if (tiMarker != null) {
-			timarkers.remove(tiMarker);
-			tiMarker.getMarker().remove();
-		}
-		annotation.processOptions();
 		// add annotation to map view
-		Marker marker = map.addMarker(annotation.getMarkerOptions());
-		tiMarker = new TiMarker(marker, annotation);
-		annotation.setTiMarker(tiMarker);
-		timarkers.add(tiMarker);
+		if (!useClustering) {
+			// if annotation already on map, remove it first then re-add it
+			TiMarker tiMarker = annotation.getTiMarker();
+			if (tiMarker != null) {
+				timarkers.remove(tiMarker);
+				tiMarker.getMarker().remove();
+			}
+			annotation.processOptions();
+			if (map != null) {
+				Marker marker = map.addMarker(annotation.getMarkerOptions());
+				tiMarker = new TiMarker(marker, annotation);
+				annotation.setTiMarker(tiMarker);
+				timarkers.add(tiMarker);
+			}
+		} else {
+			// if annotation already on map, remove it first then re-add it
+			TiClusterMarker clusterItem = annotation.getClusterMarker();
+			if (clusterItem != null) {
+				mClusterManager.removeItem(clusterItem);
+			}
+			annotation.processOptions();
+			if (map != null){
+				clusterItem = new TiClusterMarker(annotation);
+				annotation.setClusterMarker(clusterItem);
+				if (mClusterManager != null){
+					mClusterManager.addItem(clusterItem);
+				}
+				mClusterManager.cluster();
+			}
+		}
 	}
 
 	protected void addAnnotations(Object[] annotations) {
@@ -461,11 +509,15 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 	}
 
 	protected void removeAllAnnotations() {
-		for (int i = 0; i < timarkers.size(); i++) {
-			TiMarker timarker = timarkers.get(i);
-			timarker.getMarker().remove();
+		if (!useClustering) {
+			for (int i = 0; i < timarkers.size(); i++) {
+				TiMarker timarker = timarkers.get(i);
+				timarker.getMarker().remove();
+			}
+			timarkers.clear();
+		} else {
+			mClusterManager.clearItems();
 		}
-		timarkers.clear();
 	}
 
 	public TiMarker findMarkerByTitle(String title) {
@@ -503,10 +555,12 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 			}
 		} else if (annotation instanceof String) {
 			String title = (String) annotation;
-			TiMarker marker = findMarkerByTitle(title);
-			if (marker != null) {
-				marker.getMarker().showInfoWindow();
-				selectedAnnotation = marker.getProxy();
+			if (!useClustering) {
+				TiMarker marker = findMarkerByTitle(title);
+				if (marker != null) {
+					marker.getMarker().showInfoWindow();
+					selectedAnnotation = marker.getProxy();
+				}
 			}
 		}
 	}
@@ -519,9 +573,11 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 			}
 		} else if (annotation instanceof String) {
 			String title = (String) annotation;
-			TiMarker marker = findMarkerByTitle(title);
-			if (marker != null) {
-				marker.getMarker().hideInfoWindow();
+			if (!useClustering) {
+				TiMarker marker = findMarkerByTitle(title);
+				if (marker != null) {
+					marker.getMarker().hideInfoWindow();
+				}
 			}
 		}
 		selectedAnnotation = null;
@@ -529,10 +585,12 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 
 	private AnnotationProxy getProxyByMarker(Marker m) {
 		if (m != null) {
-			for (int i = 0; i < timarkers.size(); i++) {
-				TiMarker timarker = timarkers.get(i);
-				if (m.equals(timarker.getMarker())) {
-					return timarker.getProxy();
+			if (!useClustering) {
+				for (int i = 0; i < timarkers.size(); i++) {
+					TiMarker timarker = timarkers.get(i);
+					if (m.equals(timarker.getMarker())) {
+						return timarker.getProxy();
+					}
 				}
 			}
 		}
@@ -648,6 +706,77 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 		currentPolylines.clear();
 	}
 
+	/*
+	 * TileOverlay
+	 */
+	protected void addTileOverlays(Object[] o) {
+		for (int i = 0; i < o.length; i++) {
+			Object obj = o[i];
+			if (obj instanceof TileOverlayProxy) {
+				addTileOverlay((TileOverlayProxy) obj);
+			}
+		}
+	}
+
+	public void addTileOverlay(TileOverlayProxy p) {
+		if (currentTileoverlays.contains(p)) {
+			return;
+		}
+		p.setTileOverlay(map.addTileOverlay(p.getOptions()));
+		currentTileoverlays.add(p);
+	}
+
+	public void removeTileOverlay(TileOverlayProxy c) {
+		if (!currentTileoverlays.contains(c)) {
+			return;
+		}
+		c.getTileOverlay().remove();
+		c.setTileOverlay(null);
+		currentTileoverlays.remove(c);
+	}
+
+	public void removeAllTileOverlays() {
+		for (TileOverlayProxy tileOverlayProxy : currentTileoverlays) {
+			tileOverlayProxy.getTileOverlay().remove();
+			tileOverlayProxy.setTileOverlay(null);
+		}
+		currentTileoverlays.clear();
+	}
+
+	/* heatmap */
+	protected void addHeatmapOverlays(Object[] o) {
+		for (int i = 0; i < o.length; i++) {
+			Object obj = o[i];
+			if (obj instanceof HeatmapOverlayProxy) {
+				addHeatmapOverlay((HeatmapOverlayProxy) obj);
+			}
+		}
+	}
+
+	public void addHeatmapOverlay(HeatmapOverlayProxy p) {
+		if (currentHeatmapoverlays.contains(p)) {
+			return;
+		}
+		map.addTileOverlay(p.getOptions());
+		currentHeatmapoverlays.add(p);
+	}
+
+	public void removeHeatmapOverlay(HeatmapOverlayProxy c) {
+		if (!currentHeatmapoverlays.contains(c)) {
+			return;
+		}
+		// c.getHeatmapOverlay().remove();
+		// c.setHeatmapOverlay(null);
+		// currentHeatmapoverlays.remove(c);
+	}
+
+	public void removeAllHeatmapOverlays() {
+		for (HeatmapOverlayProxy tileOverlayProxy : currentHeatmapoverlays) {
+			// tileOverlayProxy.getHeatmapOverlay().remove();
+			// tileOverlayProxy.setHeatmapOverlay(null);
+		}
+		currentHeatmapoverlays.clear();
+	}
 
 	/**
 	 * Circle
@@ -796,7 +925,6 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 
 	@Override
 	public void onMapClick(LatLng point) {
-
 		if (selectedAnnotation != null) {
 			TiMarker tiMarker = selectedAnnotation.getTiMarker();
 			if (tiMarker != null) {
@@ -918,7 +1046,15 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 
 	@Override
 	public void onInfoWindowClick(Marker marker) {
-		AnnotationProxy annoProxy = getProxyByMarker(marker);
+		AnnotationProxy annoProxy = null;
+		if (!useClustering) {
+			annoProxy = getProxyByMarker(marker);
+		} else {
+			TiClusterMarker tm = (TiClusterMarker)markerItemMap.get(marker.getId());
+			if (tm != null) {
+				annoProxy = tm.getProxy();
+			}
+		}
 		if (annoProxy != null) {
 			String clicksource = annoProxy.getMapInfoWindow().getClicksource();
 			// The clicksource is null means the click event is not inside
@@ -1015,6 +1151,7 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 			proxy.setProperty(TiC.PROPERTY_REGION, d);
 			proxy.fireEvent(TiC.EVENT_REGION_CHANGED, d);
 		}
+		mClusterManager.onCameraIdle();
 	}
 
 	// Intercept the touch event to find out the correct clicksource if clicking
@@ -1061,4 +1198,22 @@ public class TiUIMapView extends TiUIFragment implements GoogleMap.OnMarkerClick
 		// keep around for backward compatibility
 	}
 
+	@Override
+	public boolean onClusterClick(Cluster<TiClusterMarker> cluster) {
+		LatLngBounds.Builder builder = LatLngBounds.builder();
+		for (TiClusterMarker item : cluster.getItems()) {
+			builder.include(item.getPosition());
+		}
+		final LatLngBounds bounds = builder.build();
+
+		if (map != null) {
+			try {
+				map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100));
+			} catch (Exception e) {}
+		}
+		return true;
+	}
+	
+	
+	
 }

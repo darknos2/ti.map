@@ -18,18 +18,36 @@ import org.appcelerator.titanium.TiApplication;
 import org.appcelerator.titanium.TiC;
 import org.appcelerator.titanium.proxy.TiViewProxy;
 import org.appcelerator.titanium.util.TiConvert;
+import org.appcelerator.titanium.util.TiSensorHelper;
 import org.appcelerator.titanium.view.TiUIView;
 
+import com.google.android.gms.maps.CameraUpdate;
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.model.CameraPosition;
 import ti.map.AnnotationProxy.AnnotationDelegate;
 import android.app.Activity;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
 import android.os.Message;
+import android.view.Display;
+import android.view.animation.Animation;
+import android.view.animation.LinearInterpolator;
+import android.view.animation.RotateAnimation;
 
 @Kroll.proxy(creatableInModule = MapModule.class, propertyAccessors = {
 		TiC.PROPERTY_USER_LOCATION, MapModule.PROPERTY_USER_LOCATION_BUTTON,
 		TiC.PROPERTY_MAP_TYPE, TiC.PROPERTY_REGION, TiC.PROPERTY_ANNOTATIONS,
 		TiC.PROPERTY_ANIMATE, MapModule.PROPERTY_TRAFFIC, TiC.PROPERTY_STYLE,
-		TiC.PROPERTY_ENABLE_ZOOM_CONTROLS, MapModule.PROPERTY_COMPASS_ENABLED })
-public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
+		TiC.PROPERTY_ENABLE_ZOOM_CONTROLS, 
+		MapModule.PROPERTY_COMPASS_ENABLED,
+		MapModule.PROPERTY_TILE_PROVIDER, MapModule.PROPERTY_MAP_STYLE,
+
+		MapModule.PROPERTY_CLUSTERING })
+public class ViewProxy extends TiViewProxy implements AnnotationDelegate, SensorEventListener {
 	private static final String TAG = "MapViewProxy";
 
 	private static final int MSG_FIRST_ID = TiViewProxy.MSG_LAST_ID + 1;
@@ -60,19 +78,36 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 	private static final int MSG_ADD_CIRCLE = MSG_FIRST_ID + 921;
 	private static final int MSG_REMOVE_CIRCLE = MSG_FIRST_ID + 922;
 	private static final int MSG_REMOVE_ALL_CIRCLES = MSG_FIRST_ID + 923;
+	private static final int MSG_ADD_TILEOVERLAY = MSG_FIRST_ID + 924;
+	private static final int MSG_REMOVE_TILEOVERLAY = MSG_FIRST_ID + 925;
+	private static final int MSG_REMOVE_ALL_TILEOVERLAYS = MSG_FIRST_ID + 926;
+	private static final int MSG_ADD_HEATMAPOVERLAY = MSG_FIRST_ID + 927;
+	private static final int MSG_REMOVE_HEATMAPOVERLAY = MSG_FIRST_ID + 928;
+	private static final int MSG_REMOVE_ALL_HEATMAPOVERLAYS = MSG_FIRST_ID + 929;
+	private static final int MSG_START_ROTATION = MSG_FIRST_ID + 930;
+	private static final int MSG_STOP_ROTATION = MSG_FIRST_ID + 931;
 
+	private String LCAT = MapModule.LCAT;
 	private final ArrayList<RouteProxy> preloadRoutes;
 	private final ArrayList<PolygonProxy> preloadPolygons;
 	private final ArrayList<PolylineProxy> preloadPolylines;
 	private final ArrayList<CircleProxy> preloadCircles;
+	private final ArrayList<TileOverlayProxy> preloadTileoverlays;
+	private final ArrayList<HeatmapOverlayProxy> preloadHeatmapoverlays;
+	private float currentBearing = 0f;
+	private int currentDeviceOrientation = 0;
+	private static SensorManager sensorManager;
 
 	public ViewProxy() {
 		super();
 		preloadRoutes = new ArrayList<RouteProxy>();
 		defaultValues.put(MapModule.PROPERTY_COMPASS_ENABLED, true);
+		defaultValues.put(MapModule.PROPERTY_CLUSTERING, false);
 		preloadPolygons = new ArrayList<PolygonProxy>();
 		preloadPolylines = new ArrayList<PolylineProxy>();
 		preloadCircles = new ArrayList<CircleProxy>();
+		preloadTileoverlays = new ArrayList<TileOverlayProxy>();
+		preloadHeatmapoverlays = new ArrayList<HeatmapOverlayProxy>();
 	}
 
 	@Override
@@ -85,8 +120,11 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 		preloadPolygons.clear();
 		preloadPolylines.clear();
 		preloadCircles.clear();
+		preloadTileoverlays.clear();
+		preloadHeatmapoverlays.clear();
 	}
 
+	@SuppressWarnings({ "unchecked", "rawtypes" })
 	@Override
 	public boolean handleMessage(Message msg) {
 		AsyncResult result = null;
@@ -245,6 +283,52 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 			return true;
 		}
 
+		case MSG_ADD_TILEOVERLAY: {
+			result = (AsyncResult) msg.obj;
+			handleAddTileOverlay((TileOverlayProxy) result.getArg());
+			result.setResult(null);
+			return true;
+		}
+
+		case MSG_REMOVE_TILEOVERLAY: {
+			result = (AsyncResult) msg.obj;
+			handleRemoveTileOverlay((TileOverlayProxy) result.getArg());
+			result.setResult(null);
+			return true;
+		}
+		case MSG_REMOVE_ALL_TILEOVERLAYS: {
+			result = (AsyncResult) msg.obj;
+			handleRemoveAllTileOverlays();
+			result.setResult(null);
+			return true;
+		}
+		case MSG_ADD_HEATMAPOVERLAY: {
+			result = (AsyncResult) msg.obj;
+			handleAddHeatmapOverlay((HeatmapOverlayProxy) result.getArg());
+			result.setResult(null);
+			return true;
+		}
+
+		case MSG_REMOVE_HEATMAPOVERLAY: {
+			result = (AsyncResult) msg.obj;
+			handleRemoveHeatmapOverlay((HeatmapOverlayProxy) result.getArg());
+			result.setResult(null);
+			return true;
+		}
+		case MSG_REMOVE_ALL_HEATMAPOVERLAYS: {
+			result = (AsyncResult) msg.obj;
+			handleRemoveAllHeatmapOverlays();
+			result.setResult(null);
+			return true;
+		}
+		case MSG_START_ROTATION: {
+			handleStartRotation();
+			return true;
+		}
+		case MSG_STOP_ROTATION: {
+			handleStopRotation();
+			return true;
+		}
 		default: {
 			return super.handleMessage(msg);
 		}
@@ -851,6 +935,223 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 		}
 	}
 
+	/* TileOverlays work */
+	@Kroll.method
+	public void addTileOverlay(TileOverlayProxy overlay) {
+		Log.d(LCAT, "KroLl: " + peekView().toString());
+		if (TiApplication.isUIThread()) {
+			handleAddTileOverlay(overlay);
+		} else {
+			TiMessenger.sendBlockingMainMessage(
+					getMainHandler().obtainMessage(MSG_ADD_TILEOVERLAY),
+					overlay);
+		}
+	}
+
+	public void handleAddTileOverlay(Object o) {
+		Log.d(LCAT, "handleAddTileOverlay: " + peekView().toString());
+		if (o == null) {
+			return;
+		}
+		TileOverlayProxy overlay = null;
+		if (o instanceof TileOverlayProxy) {
+			overlay = (TileOverlayProxy) o;
+		} else {
+			Log.e(LCAT, "parameter isn't a TileOverlay " + o.toString());
+			return;
+		}
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				Log.d(LCAT, "mapView.addTileOverlay(overlay)");
+				mapView.addTileOverlay(overlay);
+			} else {
+				addPreloadTileOverlay(overlay);
+			}
+		} else {
+			Log.w(LCAT, "peekView() !=> TiUIMapView ");
+			addPreloadTileOverlay(overlay);
+		}
+	}
+
+	public void addPreloadTileOverlay(TileOverlayProxy p) {
+		if (!preloadTileoverlays.contains(p)) {
+			preloadTileoverlays.add(p);
+		}
+	}
+
+	public void removePreloadTileOverlay(TileOverlayProxy c) {
+		if (preloadTileoverlays.contains(c)) {
+			preloadTileoverlays.remove(c);
+		}
+	}
+
+	@Kroll.method
+	public void removeTileOverlay(TileOverlayProxy overlay) {
+		if (TiApplication.isUIThread()) {
+			handleRemoveTileOverlay(overlay);
+		} else {
+			TiMessenger.sendBlockingMainMessage(
+					getMainHandler().obtainMessage(MSG_REMOVE_TILEOVERLAY),
+					overlay);
+
+		}
+	}
+
+	public void handleRemoveTileOverlay(TileOverlayProxy overlay) {
+		if (overlay == null) {
+			return;
+		}
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				mapView.removeTileOverlay(overlay);
+			} else {
+				removePreloadTileOverlay(overlay);
+			}
+		} else {
+			removePreloadTileOverlay(overlay);
+		}
+	}
+
+	@Kroll.method
+	public void removeAllTileOverlays() {
+		if (TiApplication.isUIThread()) {
+			handleRemoveAllTileOverlays();
+		} else {
+			TiMessenger.sendBlockingMainMessage(getMainHandler().obtainMessage(
+					MSG_REMOVE_ALL_TILEOVERLAYS));
+		}
+	}
+
+	public void handleRemoveAllTileOverlays() {
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				mapView.removeAllTileOverlays();
+			} else {
+				preloadTileoverlays.clear();
+			}
+		} else {
+			preloadTileoverlays.clear();
+		}
+	}
+
+	public ArrayList<TileOverlayProxy> getPreloadTileOverlay() {
+		return preloadTileoverlays;
+	}
+
+	/* HeatmapOverlays work */
+	@Kroll.method
+	public void addHeatmapOverlay(HeatmapOverlayProxy overlay) {
+		Log.d(LCAT, "KroLl: " + peekView().toString());
+		if (TiApplication.isUIThread()) {
+			handleAddHeatmapOverlay(overlay);
+		} else {
+			TiMessenger.sendBlockingMainMessage(
+					getMainHandler().obtainMessage(MSG_ADD_HEATMAPOVERLAY),
+					overlay);
+		}
+	}
+
+	public void handleAddHeatmapOverlay(Object o) {
+		Log.d(LCAT, "handleAddHeatmapOverlay: " + peekView().toString());
+		if (o == null) {
+			return;
+		}
+		HeatmapOverlayProxy overlay = null;
+		if (o instanceof HeatmapOverlayProxy) {
+			overlay = (HeatmapOverlayProxy) o;
+		} else {
+			Log.e(LCAT, "parameter isn't a HeatmapOverlay " + o.toString());
+			return;
+		}
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				Log.d(LCAT, "mapView.addHeatmapOverlay(overlay)");
+				mapView.addHeatmapOverlay(overlay);
+			} else {
+				addPreloadHeatmapOverlay(overlay);
+			}
+		} else {
+			Log.w(LCAT, "peekView() !=> TiUIMapView ");
+			addPreloadHeatmapOverlay(overlay);
+		}
+	}
+
+	public void addPreloadHeatmapOverlay(HeatmapOverlayProxy p) {
+		if (!preloadHeatmapoverlays.contains(p)) {
+			preloadHeatmapoverlays.add(p);
+		}
+	}
+
+	public void removePreloadHeatmapOverlay(HeatmapOverlayProxy c) {
+		if (preloadHeatmapoverlays.contains(c)) {
+			preloadHeatmapoverlays.remove(c);
+		}
+	}
+
+	@Kroll.method
+	public void removeHeatmapOverlay(HeatmapOverlayProxy overlay) {
+		if (TiApplication.isUIThread()) {
+			handleRemoveHeatmapOverlay(overlay);
+		} else {
+			TiMessenger.sendBlockingMainMessage(
+					getMainHandler().obtainMessage(MSG_REMOVE_TILEOVERLAY),
+					overlay);
+
+		}
+	}
+
+	public void handleRemoveHeatmapOverlay(HeatmapOverlayProxy overlay) {
+		if (overlay == null) {
+			return;
+		}
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				// mapView.removeHeatmapOverlay(overlay);
+			} else {
+				removePreloadHeatmapOverlay(overlay);
+			}
+		} else {
+			removePreloadHeatmapOverlay(overlay);
+		}
+	}
+
+	@Kroll.method
+	public void removeAllHeatmapOverlays() {
+		if (TiApplication.isUIThread()) {
+			handleRemoveAllHeatmapOverlays();
+		} else {
+			TiMessenger.sendBlockingMainMessage(getMainHandler().obtainMessage(
+					MSG_REMOVE_ALL_HEATMAPOVERLAYS));
+		}
+	}
+
+	public void handleRemoveAllHeatmapOverlays() {
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			if (mapView.getMap() != null) {
+				mapView.removeAllHeatmapOverlays();
+			} else {
+				preloadHeatmapoverlays.clear();
+			}
+		} else {
+			preloadHeatmapoverlays.clear();
+		}
+	}
+
+	public ArrayList<HeatmapOverlayProxy> getPreloadHeatmapOverlay() {
+		return preloadHeatmapoverlays;
+	}
 
 	/**
 	 * EOF Polylines
@@ -1001,6 +1302,36 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 		}
 	}
 
+	@Kroll.method
+	public void startRotation() {
+		if (TiApplication.isUIThread()) {
+			handleStartRotation();
+		} else {
+			getMainHandler().obtainMessage(MSG_START_ROTATION).sendToTarget();
+		}
+	}
+
+	@Kroll.method
+	public void stopRotation() {
+		if (TiApplication.isUIThread()) {
+			handleStopRotation();
+		} else {
+			getMainHandler().obtainMessage(MSG_STOP_ROTATION).sendToTarget();
+		}
+	}
+
+	private void handleStartRotation() {
+		if (sensorManager == null)
+			sensorManager = TiSensorHelper.getSensorManager();
+		Sensor sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION);
+		sensorManager.registerListener(this, sensor,
+				SensorManager.SENSOR_DELAY_GAME);
+	}
+
+	private void handleStopRotation() {
+		sensorManager.unregisterListener(this);
+	}
+
 	public void refreshAnnotation(AnnotationProxy annotation) {
 		TiUIView view = peekView();
 		if (view instanceof TiUIMapView) {
@@ -1028,5 +1359,46 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate {
 	public String getApiName()
 	{
 		return "Ti.Map";
+	}
+
+	@Override
+	public void onAccuracyChanged(Sensor arg0, int arg1) {
+
+	}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		float bearing = event.values[0];
+		Display display = TiApplication.getAppRootOrCurrentActivity()
+				.getWindowManager().getDefaultDisplay();
+
+		int deviceRot = display.getRotation();
+		if (currentDeviceOrientation != deviceRot) {
+			currentDeviceOrientation = deviceRot;
+		}
+		bearing += deviceRot * 90;
+		if (Math.abs(currentBearing - bearing) > 2) {
+			updateCamera(bearing);
+			currentBearing = bearing;
+		}
+
+	}
+
+	private void updateCamera(float bearing) {
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			GoogleMap gmap = mapView.getMap();
+			if (gmap != null) {
+				CameraPosition oldPos = gmap.getCameraPosition();
+				CameraPosition newPos = CameraPosition.builder(oldPos)
+						.bearing(bearing).tilt(45).build();
+				CameraUpdate update = CameraUpdateFactory
+						.newCameraPosition(newPos);
+				gmap.moveCamera(update);
+			} else
+				Log.w(LCAT, "mapView was  null");
+		} else
+			Log.w(LCAT, "view != TiUIMapView");
 	}
 }

@@ -61,6 +61,7 @@ public class AnnotationProxy extends KrollProxy
 
 	private MarkerOptions markerOptions;
 	private TiMarker marker;
+	private TiClusterMarker clusterMarker;
 	private TiMapInfoWindow infoWindow = null;
 	private static final String defaultIconImageHeight = "40dip"; //The height of the default marker icon
 	private static final String defaultIconImageWidth = "36dip"; //The width of the default marker icon
@@ -94,6 +95,9 @@ public class AnnotationProxy extends KrollProxy
 		}
 		if (marker != null) {
 			marker = null;
+		}
+		if (clusterMarker != null) {
+			clusterMarker = null;
 		}
 		if (infoWindow != null) {
 			infoWindow = null;
@@ -169,6 +173,7 @@ public class AnnotationProxy extends KrollProxy
 	public void setPosition(double latitude, double longitude)
 	{
 		marker.getMarker().setPosition(new LatLng(latitude, longitude));
+		clusterMarker.setPosition(new LatLng(latitude, longitude));
 	}
 
 	public void processOptions()
@@ -269,8 +274,10 @@ public class AnnotationProxy extends KrollProxy
 			TiDrawableReference imageref = TiDrawableReference.fromUrl(this, (String) image);
 			Bitmap bitmap = imageref.getBitmap();
 			if (bitmap != null) {
-				markerOptions.icon(BitmapDescriptorFactory.fromBitmap(bitmap));
-				setIconImageDimensions(bitmap.getWidth(), bitmap.getHeight());
+				try {
+					markerOptions.icon(BitmapDescriptorFactory.fromBitmap(bitmap));
+					setIconImageDimensions(bitmap.getWidth(), bitmap.getHeight());
+				} catch (Exception e){}
 				return;
 			}
 		}
@@ -299,9 +306,19 @@ public class AnnotationProxy extends KrollProxy
 		marker = m;
 	}
 
+	public void setClusterMarker(TiClusterMarker m)
+	{
+		clusterMarker = m;
+	}
+
 	public TiMarker getTiMarker()
 	{
 		return marker;
+	}
+
+	public TiClusterMarker getClusterMarker()
+	{
+		return clusterMarker;
 	}
 
 	public void showInfo()
