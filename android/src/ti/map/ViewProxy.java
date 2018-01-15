@@ -1401,4 +1401,15 @@ public class ViewProxy extends TiViewProxy implements AnnotationDelegate, Sensor
 		} else
 			Log.w(LCAT, "view != TiUIMapView");
 	}
+
+	@Kroll.method
+	public void clear() {
+		TiUIView view = peekView();
+		if (view instanceof TiUIMapView) {
+			TiUIMapView mapView = (TiUIMapView) view;
+			GoogleMap gmap = mapView.getMap();
+			gmap.clear();
+		}		
+	}
+	
 }
